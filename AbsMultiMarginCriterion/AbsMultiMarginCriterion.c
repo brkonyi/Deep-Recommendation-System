@@ -7,7 +7,7 @@ static int nn_(AbsMultiMarginCriterion_updateOutput)(lua_State *L)
   THTensor *input = luaT_checkudata(L, 2, torch_Tensor);  
   int sizeAverage = luaT_getfieldcheckboolean(L, 1, "sizeAverage");
   int p = luaT_getfieldchecknumber(L, 1, "p");
-  real *input_data, *target_data, *weights;
+  real *input_data, *target_data, *weights_data;
   long nframe, dim;
   long t, d;
   real target_;
@@ -47,6 +47,7 @@ static int nn_(AbsMultiMarginCriterion_updateOutput)(lua_State *L)
   input = THTensor_(newContiguous)(input);
   input_data = THTensor_(data)(input);
   target_data = THTensor_(data)(target);
+  weights_data = THTensor_(data)(weights);
 
   sum = 0;
   for(t = 0; t < nframe; t++)
@@ -61,7 +62,7 @@ static int nn_(AbsMultiMarginCriterion_updateOutput)(lua_State *L)
         continue;
     
       if(z > 0)
-        sum += ((p==1) ? z : z*z) * fabs(target_idx - d) * (1 - weights[target_idx]) / weights->size[0];
+        sum += ((p==1) ? z : z*z) * fabs(target_idx - d) * (1 - weights_data[target_idx]) / weights->size[0];
     }
     
     input_data += dim;
@@ -89,6 +90,7 @@ static int nn_(AbsMultiMarginCriterion_updateGradInput)(lua_State *L)
   real *input_data;
   real *gradInput_data;
   real *target_data;
+  real *weights_data;
   THTensor *target;
   THTensor *weights;
   long nframe, dim;
@@ -117,7 +119,8 @@ static int nn_(AbsMultiMarginCriterion_updateGradInput)(lua_State *L)
   }
 
   weights = luaT_checkudata(L, 4, torch_Tensor);
-  weights = THTensor_(newContiguous)(weights)
+  weights = THTensor_(newContiguous)(weights);
+  weights_data = THTensor_(data)(weights);
   //TODO check validity
 
   g = (sizeAverage ? 1./((real)dim) : 1.);
@@ -143,7 +146,7 @@ static int nn_(AbsMultiMarginCriterion_updateGradInput)(lua_State *L)
     
       if(z > 0)
       {
-        real h = ((p == 1) ? g : 2*g*z)*fabs(target_idx-d)/weights->size[0]*(1-weights[target_idx]);
+        real h = ((p == 1) ? g : 2*g*z)*fabs(target_idx-d)/weights->size[0]*(1-weights_data[target_idx]);
         gradInput_target -= h;
         gradInput_data[d] = h;
       }

@@ -9,8 +9,8 @@ require 'cunn'
 ------------------------------|
 -- START CONSTANTS DEFINITION |
 ------------------------------|
-DEFAULT_TRAINING_SET_DIR = './dataset/training_set/training_set_test/training/'
-DEFAULT_VALIDATION_SET_DIR = './dataset/training_set/training_set_test/validation/'
+DEFAULT_TRAINING_SET_DIR = './dataset/training_set/training/'
+DEFAULT_VALIDATION_SET_DIR = './dataset/training_set/validation/'
 
 USER_VEC_LEN  = 32 
 MOVIE_VEC_LEN = 32
@@ -57,17 +57,26 @@ function split(string, delim)
     return t
 end
 
+--Used to dump accuracy information after training is complete 
+function printCSV(config)
+    print(string.format("Epoch, Training Accuracy, Validation Accuracy, Training RMSE, Validation RMSE"))
+    for i = 1, #config.errors do
+        epochError = config.errors[i]
+        if epochError.validationError == nil then
+            epochError.validationError = 0
+            epochError.validationRMSE = 0
+        end
+        print(string.format("%d, %.4f%%, %.4f%%, %.4f, %.4f", i, 100 - epochError.trainingError, 100 - epochError.validationError, epochError.trainingRMSE, epochError.validationRMSE))
+    end 
+end
+
 --Parse the raw review and put its information into a table
 function createReview(rawReview)
     local splitReview = split(rawReview, ',')
     local review = torch.Tensor(3)
     review[USER_ID_INDEX] = tonumber(splitReview[1])
     review[RATING_INDEX]  = tonumber(splitReview[2])
-    --[[local review = {
-        userId = tonumber(splitReview[1]),
-        rating = tonumber(splitReview[2]),
-        --date   = splitReview[3]
-    }]]--
+    --Note: movie ID is populated in loadDataset, so no, it wasn't forgotten!
     return review
 end
 
@@ -118,7 +127,7 @@ function loadDataset(directory)
         while true do
             local review = getReview(f:read())
             if review == nil then break end
-            --review.movieId = movieId
+            
             review[MOVIE_ID_INDEX] = movieId
             table.insert(reviews, review)
         end
@@ -145,7 +154,6 @@ function train(network, config)
     --Load the two datasets into two tables to avoid extra file reads later
     local trainingSet = loadDataset(config.trainingSetLocation)
     local validationSet = loadDataset(config.validationSetLocation)
-    local errors = {}
 
     local x, dx = network:getParameters()
 
@@ -184,7 +192,7 @@ function train(network, config)
     end
 
     --Use RMSE Error as loss function
-    local criterion = nn.AbsMultiMarginCriterion(2, weights):cuda()
+    local criterion = nn.AbsMultiMarginCriterion(1, weights):cuda()
 
     for i = #validationSet, 1, -1 do
         if not usersSeen[validationSet[i][USER_ID_INDEX]] then
@@ -194,7 +202,7 @@ function train(network, config)
 
     print("[TRAINING] Start Training...")
     --Train on the dataset for the designated number of epochs
-    for epoch = 1, config.epoch do
+    for epoch = config.currentEpoch, config.epochs do
         print(string.format("[TRAINING] Current Epoch: %d", epoch))
         movieCount = 0
         epochError = {}
@@ -273,11 +281,9 @@ function train(network, config)
 
                     --Keep track of the average error
                     averageTrainingError = averageTrainingError + torch.sum(((torch.abs(outRating - expected) * 100) / 5)/#trainingSet)
-
-                    --print(string.format("%f %d", averageTrainingError, i))
                     averageTrainingRMSE = averageTrainingRMSE + torch.sum(torch.pow(outRating - expected, 2) / #trainingSet)
 
-                    if config.trainVectors then
+                    --if config.trainVectors then
                         for j = i, math.min(#trainingSet, i + config.batch - 1) do
                             local review = trainingSet[j]
                             local userVec = getUser(review[USER_ID_INDEX], config)
@@ -290,20 +296,19 @@ function train(network, config)
                             --userVec:add(userGrad * -sgdParams.learningRate)
                             movieVec:add(movieGrad * -sgdParams.learningRate)
                         end
-                    end
+                    --end
 
                     return loss, dx
             end
            
             --Train and update parameters
             _, fs = optim.sgd(feval, x, sgdParams)
-            ---network:syncParameters()
-            --Check to see if we are also training the user/movie vectors
+            
+--Check to see if we are also training the user/movie vectors
             --Print progress within epoch
             xlua.progress(i, #trainingSet)
         end
        
-        --print(averageTrainingError)
         epochError.trainingError = averageTrainingError
         epochError.trainingRMSE = torch.sqrt(averageTrainingRMSE)
         print(string.format("[TRAINING] Error after epoch %d over %d trials in " ..timer:time().real .. " seconds: %.4f%% RMSE: %.4f", epoch, #trainingSet, epochError.trainingError, epochError.trainingRMSE))
@@ -367,25 +372,19 @@ function train(network, config)
             validationRMSELogger:plot()
         end
 
+        table.insert(config.errors, epochError)
+        config.currentEpoch = epoch
+
         --Save the network after 20 epochs or when we're done training
-        if (epoch % 5 == 0) or (epoch == config.epoch)  then
+        if true or (epoch % 5 == 0) or (epoch == config.epochs)  then
             saveNetwork(network, config, epoch)
         end
 
-        table.insert(errors, epochError)
    end
 
     print("[TRAINING] Training Complete!")
 
-    print(string.format("Epoch, Training Error, Validation Error, Training RMSE, Validation RMSE"))
-    for i = 1, #errors do
-        epochError = errors[i]
-        if epochError.validationError == nil then
-            epochError.validationError = 0
-            epochError.validationRMSE = 0
-        end
-        print(string.format("%d, %.4f%%, %.4f%%, %.4f, %.4f", i, epochError.trainingError, epochError.validationError, epochError.trainingRMSE, epochError.validationRMSE))
-    end 
+    printCSV(config)
 end
 
 function predictRating(network, config, inputs, rating, setSize)
@@ -402,14 +401,14 @@ end
 
 function saveNetwork(network, config, epoch)
     --If the user specified a save location, save the network and other config information
-    if saveLocation ~= nil then
+    if config.saveLocation ~= nil then
         networkPackage = {
             network = network,
             config = config
         }
 
-        print('Saving trained network at: ' .. saveLocation .. epoch .. ".network")
-        torch.save(saveLocation .. epoch .. ".network", networkPackage)
+        print('Saving trained network at: ' .. config.saveLocation .. epoch .. ".network")
+        torch.save(config.saveLocation .. epoch .. ".network", networkPackage)
     end
 end
 
@@ -426,6 +425,9 @@ function parseArgs()
     parser:option "-s" "--save"
           :args(1)
           :description "Save the network after training to the given location."
+    parser:option "-r" "--resume"
+          :description "Resume training a network with a previous training configuration. If defined, all other user parameters are ignored except gpu."
+          :args(1)
     parser:option "-a" "--alpha"
           :args(1)
           :description "Set the learning rate for training."
@@ -458,10 +460,10 @@ function parseArgs()
           :default "0.0"
     parser:flag "--train"
           :description "Train the network."
-    parser:flag "--trainvectors"
+--[[    parser:flag "--trainvectors"
           :description "Enable to allow for training of user/movie vectors."
     parser:flag "--trainmatrices"
-          :description "Enable to allow for training of weight matrices."
+          :description "Enable to allow for training of weight matrices."]]--
     return parser:parse()
 end
 
@@ -471,8 +473,6 @@ end
 ------------------------|
 
 local args = parseArgs()
-local loadLocation = args.load
-saveLocation = args.save
 trainingLogger = optim.Logger("training.log")
 trainingRMSELogger = optim.Logger("trainingRMSE.log")
 validationLogger = optim.Logger("validation.log")
@@ -481,7 +481,11 @@ validationRMSELogger = optim.Logger("validationRMSE.log")
 trainingConfig = {}
 net = {}
 
-trainingConfig.epoch = tonumber(args.epoch)
+trainingConfig.saveLocation = args.save
+trainingConfig.loadLocation = args.load 
+trainingConfig.resumeLocation = args.resume
+trainingConfig.epochs = tonumber(args.epoch)
+trainingConfig.currentEpoch = 0 
 trainingConfig.userVecs = {} 
 trainingConfig.movieVecs = {}
 trainingConfig.learningRate = tonumber(args.alpha)
@@ -489,20 +493,65 @@ trainingConfig.learningRateDecay = tonumber(args.alphadecay)
 trainingConfig.momentum = tonumber(args.momentum)
 trainingConfig.batch = tonumber(args.batch)
 trainingConfig.l2Lambda = tonumber(args.lambda)
+trainingConfig.errors = {}
 
+trainingConfig.trainingSetLocation = DEFAULT_TRAINING_SET_DIR
+if args.trainingset ~= nil then
+    trainingConfig.trainingSetLocation = args.trainingset
+end
+
+print(string.format("[TRAINING] Training on set: %s", trainingConfig.trainingSetLocation))
+
+trainingConfig.validationSetLocation = DEFAULT_VALIDATION_SET_DIR
+if args.validationset ~= nil then
+    trainingConfig.validationSetLocation = args.validationset
+end
+
+print(string.format("[VALIDATION] Validating with set: %s", trainingConfig.validationSetLocation))
+
+--Set the GPU to train on.
 cutorch.setDevice(tonumber(args.gpu) + 1)
 
-if loadLocation ~= nil then
+--Check to see if we want to reload a previously trained network or we want to resume training on a network
+if trainingConfig.loadLocation ~= nil or trainingConfig.resumeLocation ~= nil then
     --Load a previously trained network
-    print("Loading previously trained network from: '" .. loadLocation .. "'...")
-    savedPackage = torch.load(loadLocation)
+    location = trainingConfig.resumeLocation or trainingConfig.loadLocation
+
+    print("Loading previously trained network from: '" .. location .. "'...")
+    savedPackage = torch.load(location)
     net = savedPackage.network
-    trainingConfig.userVecs = savedPackage.config.userVecs
-    trainingConfig.movieVecs = savedPackage.config.movieVecs
-    print('TestNet:\n' .. net:__tostring())
 
-    --TODO Reload training config?
+    --If resuming, just reload the old config to pick up where we left off
+    if trainingConfig.resumeLocation ~= nil then
+        trainingConfig = savedPackage.config
 
+        --Reload the error information from training so we can graph the results again when we resume training
+        for i = 1, #trainingConfig.errors do
+            epochError = trainingConfig.errors[i]
+            trainingLogger:add{[LOGGER_TRAINING] = (100 - epochError.trainingError)}
+            trainingRMSELogger:add{[LOGGER_TRAINING] = epochError.trainingRMSE}
+
+            if trainingConfig.validationSetLocation ~= nil then
+                validationLogger:add{[LOGGER_VALIDATION] = (100 - epochError.validationError)}
+                validationRMSELogger:add{[LOGGER_VALIDATION] = epochError.validationRMSE}
+            end
+        end
+
+        trainingLogger:style{[LOGGER_TRAINING] = "-"}
+        trainingRMSELogger:style{[LOGGER_TRAINING] = "-"}
+        validationLogger:style{[LOGGER_VALIDATION] = "-"}
+        validationRMSELogger:style{[LOGGER_VALIDATION] = "-"}
+        trainingLogger:plot()
+        trainingRMSELogger:plot()
+        validationLogger:plot()
+        validationRMSELogger:plot()
+    else
+        --If we're just loading a network, we just need to reload the user/movie vectors
+        trainingConfig.userVecs = savedPackage.config.userVecs
+        trainingConfig.movieVecs = savedPackage.config.movieVecs
+    end
+
+    print('Network:\n' .. net:__tostring())
     print("Loading complete!")
 else
     --Otherwise, train a new network
@@ -516,42 +565,27 @@ else
     net:add(nn.Dropout(0.5))
     net:add(nn.Linear(FIRST_LAYER_SIZE, SECOND_LAYER_SIZE))
     net:add(nn.ReLU())
+    net:add(nn.Dropout(0.5))
     net:add(nn.Linear(SECOND_LAYER_SIZE, THIRD_LAYER_SIZE))
     net:add(nn.ReLU())
+    net:add(nn.Dropout(0.5))
     net:add(nn.Linear(THIRD_LAYER_SIZE, 5))
     net:add(nn.LogSoftMax())
 
     --Initialize the weights of the network using xavier initialization
     net = require('weight-init')(net, 'xavier')
-    
-    --[[parallel_net = nn.DataParallel(1):cuda()
-    for i = 1, cutorch.getDeviceCount() do
-        cutorch.setDevice(i)
-        parallel_net:add(net:clone():cuda(), i)
-    end
-    cutorch.setDevice(1)
-    net = parallel_net]]--
     net = net:cuda()
+    
     print("Network structure creation complete.")
-    print('TestNet:\n' .. net:__tostring())
+    print('Network:\n' .. net:__tostring())
 end
 
-trainingConfig.trainVectors = (args.trainvectors ~= nil)
-trainingConfig.trainMatrices = (args.trainmatrices ~= nil)
+--trainingConfig.trainVectors = (args.trainvectors ~= nil)
+--trainingConfig.trainMatrices = (args.trainmatrices ~= nil)
 
 if args.train then
-    trainingConfig.trainingSetLocation = DEFAULT_TRAINING_SET_DIR
-    if args.trainingset ~= nil then
-        trainingConfig.trainingSetLocation = args.trainingset
-    end
-    print(string.format("[TRAINING] Training on set: %s", trainingConfig.trainingSetLocation))
-
-    trainingConfig.validationSetLocation = nil
-    if args.validationset ~= nil then
-        trainingConfig.validationSetLocation = args.validationset
-        print(string.format("[VALIDATION] Validating with set: %s", args.validationset))
-    end
-
+    --Increment the epoch counter just in case we're resuming training on a network
+    trainingConfig.currentEpoch = trainingConfig.currentEpoch + 1
     train(net, trainingConfig) 
 end
 
