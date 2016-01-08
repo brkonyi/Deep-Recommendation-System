@@ -242,9 +242,9 @@ function train(network, config)
             --Lua has a max memory limit of 2GB, and apparently the garbage collector doesn't like to run
             --inside of loops. On top of that, these local variables are probably causing additional memory writes
             --which is bringing us over the 2GB limit (ran into these issues with a subset of the Netflix Prize dataset)
-            if i % 25000 == 0 then
+            --[[if i % 100000 == 0 then
                 collectgarbage()
-            end
+            end]]--
 
             local inputs = torch.CudaTensor(math.min(config.batch, #trainingSet - i + 1), INPUT_VEC_LEN)
             local expected = torch.CudaTensor(math.min(config.batch, #trainingSet - i + 1))
@@ -375,8 +375,8 @@ function train(network, config)
         table.insert(config.errors, epochError)
         config.currentEpoch = epoch
 
-        --Save the network after 20 epochs or when we're done training
-        if true or (epoch % 5 == 0) or (epoch == config.epochs)  then
+        --Save the network after 5 epochs or when we're done training
+        if (epoch % 5 == 0) or (epoch == config.epochs)  then
             saveNetwork(network, config, epoch)
         end
 

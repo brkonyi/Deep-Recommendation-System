@@ -42,6 +42,7 @@ def load_reviews(path):
     #    matrix.append(row)
 
     s = (maxUser, maxMovie)
+    print s
     matrix = numpy.zeros(s)
 
     for fileName in os.listdir(path):
@@ -91,10 +92,10 @@ def load_validation(path):
 @OUTPUT:
     the final matrices P and Q
 """
-def matrix_factorization(R, P, Q, K, steps=20, alpha=0.0002, beta=0.02):
+def matrix_factorization(R, P, Q, K, steps=5000, alpha=0.0002, beta=0.02):
     Q = Q.T
     for step in xrange(steps):
-        print "Epoch: " + str(step + 1) + "/" + str(steps)
+        #print "Epoch: " + str(step + 1) + "/" + str(steps)
         for i in xrange(len(R)):
             for j in xrange(len(R[i])):
                 if R[i][j] > 0:
@@ -102,7 +103,7 @@ def matrix_factorization(R, P, Q, K, steps=20, alpha=0.0002, beta=0.02):
                     for k in xrange(K):
                         P[i][k] = P[i][k] + alpha * (2 * eij * Q[k][j] - beta * P[i][k])
                         Q[k][j] = Q[k][j] + alpha * (2 * eij * P[i][k] - beta * Q[k][j])
-        print "Done prediction phase."
+        #print "Done prediction phase."
         eR = numpy.dot(P,Q)
         e = 0
         for i in xrange(len(R)):
@@ -111,7 +112,7 @@ def matrix_factorization(R, P, Q, K, steps=20, alpha=0.0002, beta=0.02):
                     e = e + pow(R[i][j] - numpy.dot(P[i,:],Q[:,j]), 2)
                     for k in xrange(K):
                         e = e + (beta/2) * ( pow(P[i][k],2) + pow(Q[k][j],2) )
-        print "Done training phase."
+        #print "Done training phase."
         if e < 0.001:
             break
     return P, Q.T
@@ -126,14 +127,14 @@ if __name__ == "__main__":
          [1,0,0,4],
          [0,1,5,4],
         ]
-    validation = load_validation("./dataset/training_set/training_set_test/validation/")
+    validation = load_validation("./dataset/training_set/validation/")
 
-    R, users = load_reviews("./dataset/training_set/training_set_test/testing/")
+    R, users = load_reviews("./dataset/training_set/training/")
     R = numpy.array(R)
 
     N = len(R)
     M = len(R[0])
-    K = 900 
+    K = 2 
 
     P = numpy.random.rand(N,K)
     Q = numpy.random.rand(M,K)
