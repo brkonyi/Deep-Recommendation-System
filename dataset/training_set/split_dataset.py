@@ -1,7 +1,7 @@
 import os
 
 fileCount = 0
-maxFiles = 2500 
+maxFiles = 500 
 for filename in os.listdir('.'):
     if not os.path.isfile(filename):
         continue

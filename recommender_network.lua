@@ -9,8 +9,8 @@ require 'cunn'
 ------------------------------|
 -- START CONSTANTS DEFINITION |
 ------------------------------|
-DEFAULT_TRAINING_SET_DIR = './dataset/training_set/training_set_test/training/'
-DEFAULT_VALIDATION_SET_DIR = './dataset/training_set/training_set_test/validation/'
+DEFAULT_TRAINING_SET_DIR = './dataset/training_set/training/'
+DEFAULT_VALIDATION_SET_DIR = './dataset/training_set/validation/'
 
 USER_VEC_LEN  = 16 
 MOVIE_VEC_LEN = 48
@@ -18,8 +18,6 @@ INPUT_VEC_LEN = USER_VEC_LEN + MOVIE_VEC_LEN
 FIRST_LAYER_SIZE  = 128 
 SECOND_LAYER_SIZE = 192
 THIRD_LAYER_SIZE  = 256
-
-OUTPUT_FILE_NAME = 'netflix.network'
 
 LOGGER_TRAINING = "training_data"
 LOGGER_VALIDATION = "validation_data"
@@ -248,19 +246,17 @@ function train(network, config)
                     --print(string.format("%f %d", averageTrainingError, i))
                     averageTrainingRMSE = averageTrainingRMSE + torch.sum(torch.pow(outRating - expected, 2) / #trainingSet)
 
-                    if config.trainVectors then
-                        for j = i, math.min(#trainingSet, i + config.batch - 1) do
-                            local review = trainingSet[j]
-                            local userVec = getUser(review[USER_ID_INDEX], config)
-                            local movieVec = getMovie(review[MOVIE_ID_INDEX], config)
+                    for j = i, math.min(#trainingSet, i + config.batch - 1) do
+                        local review = trainingSet[j]
+                        local userVec = getUser(review[USER_ID_INDEX], config)
+                        local movieVec = getMovie(review[MOVIE_ID_INDEX], config)
 
-                            local userGrad = gradients[j - i + 1]:narrow(1, 1, USER_VEC_LEN)
-                            local movieGrad = gradients[j - i + 1]:narrow(1, USER_VEC_LEN + 1, MOVIE_VEC_LEN)
+                        local userGrad = gradients[j - i + 1]:narrow(1, 1, USER_VEC_LEN)
+                        local movieGrad = gradients[j - i + 1]:narrow(1, USER_VEC_LEN + 1, MOVIE_VEC_LEN)
 
-                            --Apply the updates to the user/movie vectors manually
-                            userVec:add(userGrad * -sgdParams.learningRate)
-                            movieVec:add(movieGrad * -sgdParams.learningRate)
-                        end
+                        --Apply the updates to the user/movie vectors manually
+                        userVec:add(userGrad * -sgdParams.learningRate)
+                        movieVec:add(movieGrad * -sgdParams.learningRate)
                     end
 
                     return loss, dx
@@ -429,10 +425,6 @@ function parseArgs()
           :default "0.0"
     parser:flag "--train"
           :description "Train the network."
-    parser:flag "--trainvectors"
-          :description "Enable to allow for training of user/movie vectors."
-    parser:flag "--trainmatrices"
-          :description "Enable to allow for training of weight matrices."
     return parser:parse()
 end
 
@@ -506,9 +498,6 @@ else
     print("Network structure creation complete.")
     print('TestNet:\n' .. net:__tostring())
 end
-
-trainingConfig.trainVectors = (args.trainvectors ~= nil)
-trainingConfig.trainMatrices = (args.trainmatrices ~= nil)
 
 if args.train then
     trainingConfig.trainingSetLocation = DEFAULT_TRAINING_SET_DIR
