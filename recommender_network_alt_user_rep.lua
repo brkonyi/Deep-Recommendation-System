@@ -5,6 +5,7 @@ require 'nn'
 require 'optim'
 require 'cutorch'
 require 'cunn'
+tds = require 'tds'
 
 ------------------------------|
 -- START CONSTANTS DEFINITION |
@@ -74,6 +75,9 @@ end
 function createReview(rawReview)
     local splitReview = split(rawReview, ',')
     local review = torch.Tensor(3)
+    if tonumber(splitReview[1]) == nil then
+        return nil
+    end
     review[USER_ID_INDEX] = tonumber(splitReview[1])
     review[RATING_INDEX]  = tonumber(splitReview[2])
     --Note: movie ID is populated in loadDataset, so no, it wasn't forgotten!
@@ -114,7 +118,7 @@ function loadDataset(directory)
 
     local files = getFileNames(directory)
     local dataset = {}
-    local reviews = {}
+    local reviews = tds.Hash()
     
     for i = 1, #files do
         if i % 100 == 0 then 
@@ -129,9 +133,10 @@ function loadDataset(directory)
             if review == nil then break end
             
             review[MOVIE_ID_INDEX] = movieId
-            table.insert(reviews, review)
+            reviews[#reviews + 1] = review
         end
         f:close()
+        xlua.progress(i, #files)
     end
 
     return reviews 
@@ -192,7 +197,7 @@ function train(network, config)
     end
 
     --Use RMSE Error as loss function
-    local criterion = nn.AbsMultiMarginCriterion(1, weights):cuda()
+    local criterion = nn.ClassNLLCriterion(weights):cuda()
 
     for i = #validationSet, 1, -1 do
         if not usersSeen[validationSet[i][USER_ID_INDEX]] then
