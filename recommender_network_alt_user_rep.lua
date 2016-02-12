@@ -35,7 +35,7 @@ local uint8_p  = ffi.typeof("uint8_t*")
 DEFAULT_TRAINING_SET_DIR = './dataset/training_set/training/'
 DEFAULT_VALIDATION_SET_DIR = './dataset/training_set/validation/'
 
-USER_VEC_LEN  = 32 
+USER_VEC_LEN  = 16 
 MOVIE_VEC_LEN = USER_VEC_LEN
 INPUT_VEC_LEN = USER_VEC_LEN + MOVIE_VEC_LEN
 FIRST_LAYER_SIZE  = 128 
@@ -81,7 +81,7 @@ end
 function getMovie(movieId, config)
     --Check to see if there's a movie vector for this movie id
     if config.movieVecs[movieId] == nil then
-       config.movieVecs[movieId] = torch.randn(MOVIE_VEC_LEN, 1):cuda() 
+       config.movieVecs[movieId] = torch.randn(MOVIE_VEC_LEN, 1) 
     end
     return config.movieVecs[movieId]
 end
@@ -90,7 +90,7 @@ end
 function getUser(userId, config)
     --Check to see if there's a user vector for this user id
     if config.userVecs[userId] == nil then
-        config.userVecs[userId] = torch.randn(USER_VEC_LEN, 1):cuda()
+        config.userVecs[userId] = torch.randn(USER_VEC_LEN, 1)
     end
     return config.userVecs[userId]
 end
@@ -182,7 +182,7 @@ function loadDataset(directory, userList)
 
     --Calculate the final weights
     for i = 1, 5 do
-        weights[i] = weights[i] / reviewCount 
+        weights[i] = 1 - (weights[i] / reviewCount)
     end
 
     --If we created a new list of users we've seen, we want to return it
@@ -253,8 +253,8 @@ end
 
 --Creates a batch of size config.batch starting at index start
 function createBatch(start, dataSet, dataSetSize, config)
-    local inputs = torch.CudaTensor(math.min(config.batch, dataSetSize - start + 1), INPUT_VEC_LEN)
-    local expected = torch.CudaTensor(math.min(config.batch, dataSetSize - start + 1))
+    local inputs = torch.Tensor(math.min(config.batch, dataSetSize - start + 1), INPUT_VEC_LEN)
+    local expected = torch.Tensor(math.min(config.batch, dataSetSize - start + 1))
 
     --Build the batched dataset
     local j = 1
@@ -268,7 +268,7 @@ function createBatch(start, dataSet, dataSetSize, config)
         expected[j - start + 1] = review.rating
     end
 
-    return inputs, expected
+    return inputs:cuda(), expected:cuda()
 end
 
 function train(network, config)
@@ -323,9 +323,15 @@ function train(network, config)
         --------------------------
         -- TRAINING STARTS HERE --
         --------------------------
+        batchTime = 0
+        netTime = 0
+        gradTime = 0
+        test = torch.Timer()
+        last = 0
         for i = 1, trainingSetSize, config.batch do
+            last = test:time().real
             local inputs, expected = createBatch(i, trainingSet, trainingSetSize, config)
-
+            batchTime = batchTime + (test:time().real - last)
             --Define the closure calculation function
             local feval = function(x_new)
                 if x ~= x_new then
@@ -335,10 +341,14 @@ function train(network, config)
                 --Zero the accumulated gradients
                 dx:zero()
 
+                last = test:time().real
                 --Perform the training
                 local output = network:forward(inputs)
                 local loss = criterion:forward(output, expected)
                 local gradients = network:backward(inputs, criterion:backward(output, expected))
+                netTime = netTime + (test:time().real - last)
+                
+                gradients = gradients:double()
 
                 local _, outRating = torch.max(output, 2)
                 local outRating = outRating:resize(outRating:size(1))
@@ -349,18 +359,23 @@ function train(network, config)
                 averageTrainingError = averageTrainingError + trainingError
                 averageTrainingRMSE = averageTrainingRMSE + trainingMSE
 
+                last = test:time().real
                 for j = i, math.min(trainingSetSize, i + config.batch - 1) do
                     local review = trainingSet[j]
+                    --local userVec = getUser(review.userId, config)
                     local movieVec = getMovie(review.movieId, config)
+                    --local userGrad = gradients[j - i + 1]:narrow(1, 1, USER_VEC_LEN)
                     local movieGrad = gradients[j - i + 1]:narrow(1, USER_VEC_LEN + 1, MOVIE_VEC_LEN)
 
                     --Apply the updates to the user/movie vectors manually
+                    --userVec:add(userGrad * -sgdParams.learningRate)
                     movieVec:add(movieGrad * -sgdParams.learningRate)
                 end
+                gradTime = gradTime + (test:time().real - last)
 
                 return loss, dx
             end
-           
+  
             --Train and update parameters
             local _, fs = optim.sgd(feval, x, sgdParams)
            
@@ -370,7 +385,10 @@ function train(network, config)
             end
         end
         xlua.progress(trainingSetSize, trainingSetSize)
-       
+ 
+        last = test:time().real
+        --print("Batch: " .. batchTime * 100 / last .. " Net: " ..  netTime * 100 / last .. " Grad: " .. gradTime * 100 / last)
+           
         epochError.trainingError = averageTrainingError
         epochError.trainingRMSE = torch.sqrt(averageTrainingRMSE)
         print(string.format("[TRAINING] Error after epoch %d over %d trials in " ..timer:time().real .. " seconds: %.4f%% RMSE: %.4f", epoch, trainingSetSize, epochError.trainingError, epochError.trainingRMSE))
